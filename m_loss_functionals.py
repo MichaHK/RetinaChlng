@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class DiceLoss(nn.Module):
     def __init__(self, eps=1e-7):
         super(DiceLoss, self).__init__()
@@ -20,6 +19,7 @@ class DiceLoss(nn.Module):
             denominator = Activation.sum() + target.sum()
         else: 
             print('screen argument type is wrong')
+            return None
         return 1 - 2 * (numerator / denominator)
 
         
@@ -28,18 +28,19 @@ class WCE(nn.Module):
     cross entropy. Weight is in range [0,inf]. To decrease the number of false negatives, use a large weight. 
     To decrease the number flase positives, set to small. 
     """
-    def __init__(self, eps=1e-7):
+    def __init__(self,  eps=1e-7):
         super(WCE, self).__init__()
         self.eps = eps
-    def forward(self, output, target, screen = None):  
+    def forward(self, output, target, screen = None, weight = torch.tensor(1, requires_grad=False)):
         output.requires_grad_(requires_grad=True) # absolutely necessary! Not in Jupyter, but yes in here. 
         target.requires_grad_(requires_grad=False) # may be redundant
+        weight = self.weight
         if isinstance(screen, torch.Tensor):
             screen.requires_grad_(requires_grad=False) # may be redundant
             return -(weight * target[screen > 0.5] * F.logsigmoid(output[screen > 0.5]) + 
-                    (1-target[screen > 0.5]) * F.logsigmoid(1 - output[screen > 0.5])).sum()
+                    (1-target[screen > 0.5]) * F.logsigmoid(-output[screen > 0.5])).sum()
         elif screen == None:
-            return -(weight * target * F.logsigmoid(output) + (1-target) * F.logsigmoid(1 - output)).sum()
+            return -(weight * target * F.logsigmoid(output) + (1-target) * F.logsigmoid( - output)).sum()
         else: 
             print('screen argument type is wrong')
             return screen
@@ -52,18 +53,18 @@ class FocalLoss(nn.Module):
     def __init__(self, eps=1e-7):
         super(FocalLoss, self).__init__()
         self.eps = eps
-    def forward(self, output, target, screen = None, alpha = 1, gamma = 1):  
+    def forward(self, output, target, screen = None, alpha = torch.tensor(0.5, requires_grad=False), gamma = torch.tensor(1., requires_grad=False)):
         output.requires_grad_(requires_grad=True) # absolutely necessary! Not in Jupyter, but yes in here. 
         target.requires_grad_(requires_grad=False) # may be redundant
         p_hat = torch.sigmoid(output)
+        weight_a = self.alpha * target * (1 - p_hat)**self.gamma
+        weight_b = (1 - self.alpha) * (1 - target) * p_hat**self.gamma
         if isinstance(screen, torch.Tensor):
             screen.requires_grad_(requires_grad=False) # may be redundant
-            return -(weight * target[screen > 0.5] * F.logsigmoid(output[screen > 0.5]) + 
-                    (1-target[screen > 0.5]) * F.logsigmoid(1 - output[screen > 0.5])).sum()
+            return -((weight_a*F.logsigmoid(output) + weight_b * F.logsigmoid(-output))[screen > 0.5]).sum()
         elif screen == None:
-            weight_a = alpha * target * (1 - p_hat)**gamma
-            weight_b = (1 - alpha)  * (1 - target) * p_hat**gamma
-            return -(weight * target * F.logsigmoid(output) + (1-target) * F.logsigmoid(1 - output)).sum()
+
+            return -(weight_a*F.logsigmoid(output) + weight_b * F.logsigmoid(-output)).sum()
         else: 
             print('screen argument type is wrong')
             return screen

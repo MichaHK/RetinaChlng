@@ -53,12 +53,13 @@ class FocalLoss(nn.Module):
     def __init__(self, eps=1e-7):
         super(FocalLoss, self).__init__()
         self.eps = eps
-    def forward(self, output, target, screen = None, alpha = torch.tensor(0.5, requires_grad=False), gamma = torch.tensor(1., requires_grad=False)):
+    def forward(self, output, target, screen = None, alpha = torch.tensor(0.5, requires_grad=False), gamma = 1):
         output.requires_grad_(requires_grad=True) # absolutely necessary! Not in Jupyter, but yes in here. 
         target.requires_grad_(requires_grad=False) # may be redundant
         p_hat = torch.sigmoid(output)
-        weight_a = self.alpha * target * (1 - p_hat)**self.gamma
-        weight_b = (1 - self.alpha) * (1 - target) * p_hat**self.gamma
+#         import pdb; pdb.set_trace()
+        weight_a = alpha * target * (1 - p_hat)**gamma
+        weight_b = (1 - alpha) * (1 - target) * p_hat**gamma
         if isinstance(screen, torch.Tensor):
             screen.requires_grad_(requires_grad=False) # may be redundant
             return -((weight_a*F.logsigmoid(output) + weight_b * F.logsigmoid(-output))[screen > 0.5]).sum()

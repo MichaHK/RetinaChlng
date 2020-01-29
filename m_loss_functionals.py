@@ -50,9 +50,8 @@ class FocalLoss(nn.Module):
     """My custom Focal Loss function. It runs on an output that was not normalized yet using a sigmoid. 
     For stability, I used the tricks on Lar's Blog: https://lars76.github.io/neural-networks/object-detection/losses-for-segmentation 
     """
-    def __init__(self, eps=1e-7):
-        super(FocalLoss, self).__init__()
-        self.eps = eps
+    def __init__(self): # maybe: __init__(self, alpha = torch.tensor(0.5, requires_grad=False), gamma = 1);
+        super(FocalLoss, self).__init__() # maybe: super().__init__();
     def forward(self, output, target, screen = None, alpha = torch.tensor(0.5, requires_grad=False), gamma = 1):
         output.requires_grad_(requires_grad=True) # absolutely necessary! Not in Jupyter, but yes in here. 
         target.requires_grad_(requires_grad=False) # may be redundant

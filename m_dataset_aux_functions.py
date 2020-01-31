@@ -51,7 +51,8 @@ class Dataset(BaseDataset):
             augmentation=None,
             preprocessing=None,
             size=None,
-            interpolation=2  # 0 means no interpolation. Mask will remain binary.
+            interpolation=2,  # 0 means no interpolation. Mask will remain binary.
+            ImageNetNorm=True
     ):
 
         if not mask_paths:
@@ -71,23 +72,18 @@ class Dataset(BaseDataset):
         self.augmentation = augmentation
         self.preprocessing = preprocessing
         self.interpolation = interpolation
-
+        self.ImageNetNorm = ImageNetNorm
     def __getitem__(self, i):
         # load image, screen and mask (target). The tiff images open only with Pillow version 5.2.0
         image = Image.open(self.images[i])
         screen = Image.open(self.screens[i])
         if not self.istest:
             mask = Image.open(self.masks[i])
-        #             mask = torchvision.transforms.functional.crop(mask, 19, 0, mask.size[0]-9, mask.size[0]-9)
-        #         image = torchvision.transforms.functional.crop(image, 19, 0, image.size[0]-9, image.size[0]-9)
-        #         screen = torchvision.transforms.functional.crop(screen, 19, 0, screen.size[0]-9, screen.size[0]-9)
         # Basic preprocessing:
-
         Flip = transforms.RandomHorizontalFlip(p=0.5)
         CenterCrop = transforms.CenterCrop(self.size)
 
         ToTensor = transforms.ToTensor()  # this normalizies to [0,1] range, so must appear before the ImageNet normalization
-        Normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         BasicTransforms = list([
             #                                 Resize,
             #                                 CenterCrop,
@@ -97,13 +93,15 @@ class Dataset(BaseDataset):
             #                                 Resize,
             #                                 CenterCrop,
             ToTensor,
-            Normalize
         ])
         if isinstance(self.size, int) and not isinstance(self.size, bool):
             Resize = transforms.Resize((self.size, self.size),
                                        self.interpolation)  # the zero is extremely important, or it will change the values
             BasicTransforms.insert(0, Resize)
             ImageTransforms.insert(0, Resize)
+        if self.ImageNetNorm:
+            Normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ImageTransforms.append(Normalize)
         ImageTransformer = transforms.Compose(ImageTransforms)
         MaskTransformer = transforms.Compose(BasicTransforms)
 
@@ -129,7 +127,7 @@ class Dataset(BaseDataset):
 
 
 def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
-                 ValidationFraction=0.2, size=None, interpolation=2):
+                 ValidationFraction=0.2, size=None, interpolation=2, ImageNetNorm=True):
     """Take image directory and produce training and validation Dataset (2 Dataset using my custom class. ). . \n
         Uses functions "get_screen_path" and "get_mask_path" to include the correct mask (y) and screen to the sets. \n
 
@@ -164,10 +162,10 @@ def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
     target_paths_vldt = [get_mask_path(Path(image_path), target_dir) for
                          image_path in x_images_paths_vldt]
     trainDataset = Dataset(x_images_paths_train, screen_paths_train, target_paths_train,
-                           size=size, interpolation=interpolation)
+                           size=size, interpolation=interpolation, ImageNetNorm=ImageNetNorm)
 
     vldtnDataset = Dataset(x_images_paths_vldt, screen_paths_vldt, target_paths_vldt,
-                           size=size, interpolation=interpolation)
+                           size=size, interpolation=interpolation, ImageNetNorm=ImageNetNorm)
     return (trainDataset, vldtnDataset)
 
 
@@ -188,3 +186,17 @@ def visualizeDataset(dataset, UnNormalize=True):
     ax[0].set(xticks=(), yticks=(), title='Image number ' + str(tmp_dataset.ids[ind]));
     ax[1].imshow(tmp_mask_tensor, cmap='gray')
     ax[1].set(xticks=(), yticks=());
+
+def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
+    with torch.no_grad():
+        model.eval()
+        val_Epoch_losses = list()
+        for ii, (data, target, screen) in enumerate(data_loader):
+            data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+            output = model(data)
+            #             val_loss = diceLoss(output, target)
+            val_loss = loss_criterion(output, target, screen)
+            #             val_loss = criterion(output, target, screen, alpha = torch.tensor(1.), gamma = 2.)
+            val_Epoch_losses.append(val_loss.item())
+            del val_loss
+    return np.mean(val_Epoch_losses)

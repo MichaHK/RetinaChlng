@@ -191,12 +191,16 @@ def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
     with torch.no_grad():
         model.eval()
         val_Epoch_losses = list()
+        metric_epoch_vals = list()
+
         for ii, (data, target, screen) in enumerate(data_loader):
             data, target, screen = data.cuda(), target.cuda(), screen.cuda()
             output = model(data)
             #             val_loss = diceLoss(output, target)
             val_loss = loss_criterion(output, target, screen)
+            metric_epoch_val = metric(output, target, screen)
             #             val_loss = criterion(output, target, screen, alpha = torch.tensor(1.), gamma = 2.)
             val_Epoch_losses.append(val_loss.item())
+            metric_epoch_vals.append(metric_epoch_val.item())
             del val_loss
-    return np.mean(val_Epoch_losses)
+    return np.mean(val_Epoch_losses), np.mean(metric_epoch_vals)

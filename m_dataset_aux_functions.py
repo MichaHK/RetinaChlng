@@ -3,10 +3,12 @@ from torch.utils.data import Dataset as BaseDataset
 from pathlib import Path
 import numpy as np
 from PIL import Image
+from PIL import ImageOps
 from torchvision import transforms
 import torch
 import matplotlib.pyplot as plt
 import torchvision
+import m_transforms
 
 
 def get_mask_path(x_image_path, y_train_dir):
@@ -48,11 +50,10 @@ class Dataset(BaseDataset):
             screen_paths,
             mask_paths=None,
             classes=['yes'],
-            augmentation=None,
-            preprocessing=None,
+            preprocessing_trnsfrms=list(),
             size=None,
             interpolation=2,  # 0 means no interpolation. Mask will remain binary.
-            ImageNetNorm=True
+            UseGreenOnly=False,
     ):
 
         if not mask_paths:
@@ -69,39 +70,38 @@ class Dataset(BaseDataset):
             self.masks = [str(image_path.absolute()) for image_path in mask_paths]  # a list of paths to masks.
         self.class_values = [self.CLASSES_pool.index(cls.lower()) for cls in classes]
         self.size = size
-        self.augmentation = augmentation
-        self.preprocessing = preprocessing
+        self.preprocessing_trnsfrms = preprocessing_trnsfrms
         self.interpolation = interpolation
-        self.ImageNetNorm = ImageNetNorm
+        self.UseGreenOnly = UseGreenOnly
+
     def __getitem__(self, i):
         # load image, screen and mask (target). The tiff images open only with Pillow version 5.2.0
         image = Image.open(self.images[i])
         screen = Image.open(self.screens[i])
+
         if not self.istest:
             mask = Image.open(self.masks[i])
+
         # Basic preprocessing:
+        if self.UseGreenOnly:
+            _, image, _ = image.split()
+
         Flip = transforms.RandomHorizontalFlip(p=0.5)
         CenterCrop = transforms.CenterCrop(self.size)
 
         ToTensor = transforms.ToTensor()  # this normalizies to [0,1] range, so must appear before the ImageNet normalization
         BasicTransforms = list([
-            #                                 Resize,
-            #                                 CenterCrop,
             ToTensor,
         ])
-        ImageTransforms = list([
-            #                                 Resize,
-            #                                 CenterCrop,
-            ToTensor,
-        ])
+        ImageTransforms = self.preprocessing_trnsfrms.copy()
+        ImageTransforms.append(ToTensor)
+
         if isinstance(self.size, int) and not isinstance(self.size, bool):
             Resize = transforms.Resize((self.size, self.size),
                                        self.interpolation)  # the zero is extremely important, or it will change the values
             BasicTransforms.insert(0, Resize)
             ImageTransforms.insert(0, Resize)
-        if self.ImageNetNorm:
-            Normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ImageTransforms.append(Normalize)
+
         ImageTransformer = transforms.Compose(ImageTransforms)
         MaskTransformer = transforms.Compose(BasicTransforms)
 
@@ -110,14 +110,6 @@ class Dataset(BaseDataset):
 
         if not self.istest:
             mask = MaskTransformer(mask)
-        # apply augmentations
-        if self.augmentation:
-            1;
-
-        # apply preprocessing
-        if self.preprocessing:
-            1;
-
         if self.istest:
             return image, screen
         return image, mask, screen
@@ -127,7 +119,7 @@ class Dataset(BaseDataset):
 
 
 def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
-                 ValidationFraction=0.2, size=None, interpolation=2, ImageNetNorm=True):
+                 ValidationFraction=0.2, size=None, interpolation=2, UseGreenOnly=False, preprocessing_trnsfrms=list()):
     """Take image directory and produce training and validation Dataset (2 Dataset using my custom class. ). . \n
         Uses functions "get_screen_path" and "get_mask_path" to include the correct mask (y) and screen to the sets. \n
 
@@ -161,11 +153,14 @@ def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
                           image_path in x_images_paths_train]
     target_paths_vldt = [get_mask_path(Path(image_path), target_dir) for
                          image_path in x_images_paths_vldt]
-    trainDataset = Dataset(x_images_paths_train, screen_paths_train, target_paths_train,
-                           size=size, interpolation=interpolation, ImageNetNorm=ImageNetNorm)
 
-    vldtnDataset = Dataset(x_images_paths_vldt, screen_paths_vldt, target_paths_vldt,
-                           size=size, interpolation=interpolation, ImageNetNorm=ImageNetNorm)
+    trainDataset = Dataset(x_images_paths_train, screen_paths_train, mask_paths=target_paths_train,
+                           size=size, interpolation=interpolation,
+                           UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms)
+
+    vldtnDataset = Dataset(x_images_paths_vldt, screen_paths_vldt, mask_paths=target_paths_train,
+                           size=size, interpolation=interpolation,
+                           UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms)
     return (trainDataset, vldtnDataset)
 
 
@@ -177,15 +172,23 @@ def visualizeDataset(dataset, UnNormalize=True):
 
     tmp_image_tensor = (tmp_dataset[ind][0]).permute(1, 2, 0)
     tmp_mask_tensor = np.squeeze((tmp_dataset[ind][1]).permute(1, 2, 0))
+    # import pdb; pdb.set_trace()
+    isOneChannel = tmp_image_tensor.shape[2] == 1
     if UnNormalize:
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
         ax[0].imshow((tmp_image_tensor * torch.tensor(std)) + torch.tensor(mean))
     else:
-        ax[0].imshow(tmp_image_tensor)
+        # import pdb; pdb.set_trace()
+        if isOneChannel:
+            tmp_image_tensor = tmp_image_tensor.squeeze()
+            ax[0].imshow(tmp_image_tensor, cmap='gray')
+        else:
+            ax[0].imshow(tmp_image_tensor)
     ax[0].set(xticks=(), yticks=(), title='Image number ' + str(tmp_dataset.ids[ind]));
     ax[1].imshow(tmp_mask_tensor, cmap='gray')
     ax[1].set(xticks=(), yticks=());
+
 
 def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
     with torch.no_grad():

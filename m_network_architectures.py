@@ -9,10 +9,10 @@ import numpy as np
 
 ### all things pertaining to the resnet connecting input directly to output, skiping the UNet. ###
 class ResNet_fixedImgSize(nn.Module):
-    def __init__(self, bn=True):
+    def __init__(self, bn=True, SingleChannel=False):
         super().__init__()
-
-        self.res_layers = nn.Sequential(ResBlock(3,  64, bn=bn),
+        ch_in = 1 if SingleChannel else 3
+        self.res_layers = nn.Sequential(ResBlock(ch_in,  64, bn=bn),
                                         ResBlock(64, 64, bn=bn),
                                         ResBlock(64, 64, bn=bn),
                                         ResBlock(64, 64, bn=bn),
@@ -89,10 +89,10 @@ class UNet_V4(nn.Module):
     output: a predicted mask, not normalized (not last activation layer). So all loss functions must first use sigmoid activation.
     """
 
-    def __init__(self, n_class, bn=False):
+    def __init__(self, n_class, bn=False, SingleChannel = False):
         super().__init__()
-
-        self.layer0 = nn.Sequential(Conv2D_BN_ReLU(3, 64, kernel=7, padding=3, stride=2, bn=bn))  # base_layers[:3]
+        ch_in = 1 if SingleChannel else 3
+        self.layer0 = nn.Sequential(Conv2D_BN_ReLU(ch_in, 64, kernel=7, padding=3, stride=2, bn=bn))  # base_layers[:3]
         self.layer0_1x1 = convrelu(64, 64, 1, 0)
 
         self.layer1 = nn.Sequential(nn.MaxPool2d(kernel_size=3, stride=2,
@@ -125,7 +125,7 @@ class UNet_V4(nn.Module):
 
         # self.conv_original_size0 = convrelu(3, 64, 3, 1) # replace, the direct input - output link
         # self.conv_original_size1 = convrelu(64, 64, 3, 1) # replace, the direct input - output link
-        self.ResNet_Input_to_Output = ResNet_fixedImgSize(bn=bn)  # 3 to 64
+        self.ResNet_Input_to_Output = ResNet_fixedImgSize(bn=bn, SingleChannel=SingleChannel)  # 3 to 64
         self.conv_original_size2 = convrelu(64 + 128, 64, 3, 1)  # replace? Merging direct link with the upsampling.
 
         self.conv_last = nn.Conv2d(64, n_class, 1)

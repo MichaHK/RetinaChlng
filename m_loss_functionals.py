@@ -69,3 +69,26 @@ class FocalLoss(nn.Module):
         else: 
             print('screen argument type is wrong')
             return screen
+
+class Sensitivity(nn.Module):
+    """\frac{TP}{TP+FN}
+    """
+    def __init__(self):
+        super().__init__() # maybe: super().__init__();
+
+    def forward(self, output, target, screen = None):
+        output.requires_grad_(requires_grad=True) # absolutely necessary! Not in Jupyter, but yes in here.
+        target.requires_grad_(requires_grad=False) # may be redundant
+        p_hat = torch.sigmoid(output)
+#         import pdb; pdb.set_trace()
+        weight_a = self.alpha * target * (1 - p_hat)**self.gamma
+        weight_b = (1 - self.alpha) * (1 - target) * p_hat**self.gamma
+        if isinstance(screen, torch.Tensor):
+            screen.requires_grad_(requires_grad=False) # may be redundant
+            return -((weight_a*F.logsigmoid(output) + weight_b * F.logsigmoid(-output))[screen > 0.5]).sum()
+        elif screen == None:
+
+            return -(weight_a*F.logsigmoid(output) + weight_b * F.logsigmoid(-output)).sum()
+        else:
+            print('screen argument type is wrong')
+            return screen

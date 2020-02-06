@@ -9,7 +9,7 @@ import torch
 import matplotlib.pyplot as plt
 import torchvision
 import m_transforms
-
+import random
 
 def get_mask_path(x_image_path, y_train_dir):
     """Get the path of the segmented training file for the path of an original image. \n
@@ -51,8 +51,7 @@ class Dataset(BaseDataset):
             mask_paths=None,
             classes=['yes'],
             preprocessing_trnsfrms=list(),
-            size=None,
-            interpolation=2,  # 0 means no interpolation. Mask will remain binary.
+            mask_trnsfrms=list(),
             UseGreenOnly=False,
     ):
 
@@ -69,9 +68,8 @@ class Dataset(BaseDataset):
         if mask_paths:
             self.masks = [str(image_path.absolute()) for image_path in mask_paths]  # a list of paths to masks.
         self.class_values = [self.CLASSES_pool.index(cls.lower()) for cls in classes]
-        self.size = size
         self.preprocessing_trnsfrms = preprocessing_trnsfrms
-        self.interpolation = interpolation
+        self.mask_trnsfrms = mask_trnsfrms
         self.UseGreenOnly = UseGreenOnly
 
     def __getitem__(self, i):
@@ -82,28 +80,36 @@ class Dataset(BaseDataset):
         if not self.istest:
             mask = Image.open(self.masks[i])
 
-        # Basic preprocessing:
         if self.UseGreenOnly:
             _, image, _ = image.split()
 
-        Flip = transforms.RandomHorizontalFlip(p=0.5)
-        CenterCrop = transforms.CenterCrop(self.size)
+        # Flip = transforms.RandomHorizontalFlip(p=0.5)
+        # CenterCrop = transforms.CenterCrop(self.size)
 
         ToTensor = transforms.ToTensor()  # this normalizies to [0,1] range, so must appear before the ImageNet normalization
-        BasicTransforms = list([
-            ToTensor,
-        ])
-        ImageTransforms = self.preprocessing_trnsfrms.copy()
-        ImageTransforms.append(ToTensor)
 
-        if isinstance(self.size, int) and not isinstance(self.size, bool):
-            Resize = transforms.Resize((self.size, self.size),
-                                       self.interpolation)  # the zero is extremely important, or it will change the values
-            BasicTransforms.insert(0, Resize)
-            ImageTransforms.insert(0, Resize)
+        ImageTransforms = self.preprocessing_trnsfrms.copy()
+        MaskTransforms = self.mask_trnsfrms.copy()
+
+        if isinstance(ImageTransforms[0], torchvision.transforms.transforms.RandomCrop):
+            CropSize = ImageTransforms[0].size
+            if isinstance(CropSize, int):
+                CropSize = (CropSize, CropSize)
+            del ImageTransforms[0]
+            del MaskTransforms[0]
+            y = np.random.randint(0, image.size[0] - CropSize[0])
+            x = np.random.randint(0, image.size[1] - CropSize[1])
+            image = image.crop((y, x, y + CropSize[0], x + CropSize[1]))  # left, upper, right, and lower
+            screen = screen.crop((y, x, y + CropSize[0], x + CropSize[1]))  # left, upper, right, and lower
+            if not self.istest:
+                mask = mask.crop((y, x, y + CropSize[0], x + CropSize[1]))  # left, upper, right, and lower
+
+        ImageTransforms.append(ToTensor)
+        MaskTransforms.append(ToTensor)
 
         ImageTransformer = transforms.Compose(ImageTransforms)
-        MaskTransformer = transforms.Compose(BasicTransforms)
+
+        MaskTransformer = transforms.Compose(MaskTransforms)
 
         image = ImageTransformer(image)
         screen = MaskTransformer(screen)
@@ -119,7 +125,7 @@ class Dataset(BaseDataset):
 
 
 def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
-                 ValidationFraction=0.2, size=None, interpolation=2, UseGreenOnly=False, preprocessing_trnsfrms=list()):
+                 ValidationFraction=0.2, mask_trnsfrms=list(), UseGreenOnly=False, preprocessing_trnsfrms=list()):
     """Take image directory and produce training and validation Dataset (2 Dataset using my custom class. ). . \n
         Uses functions "get_screen_path" and "get_mask_path" to include the correct mask (y) and screen to the sets. \n
 
@@ -155,12 +161,12 @@ def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
                          image_path in x_images_paths_vldt]
 
     trainDataset = Dataset(x_images_paths_train, screen_paths_train, mask_paths=target_paths_train,
-                           size=size, interpolation=interpolation,
-                           UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms)
+                           UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms,
+                           mask_trnsfrms = mask_trnsfrms)
 
     vldtnDataset = Dataset(x_images_paths_vldt, screen_paths_vldt, mask_paths=target_paths_train,
-                           size=size, interpolation=interpolation,
-                           UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms)
+                           UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms,
+                           mask_trnsfrms=mask_trnsfrms)
     return (trainDataset, vldtnDataset)
 
 
@@ -169,24 +175,23 @@ def visualizeDataset(dataset, UnNormalize=True):
     tmp_dataset = dataset
     fig, ax, = plt.subplots(1, 2, figsize=(16, 7))
     ind = np.random.randint(0, len(tmp_dataset.ids))
+    image, mask, screen = tmp_dataset[ind]
+    def PermuteDimsForPlot(tensor):
+        if tensor.shape[0] == 1:
+            return tensor.squeeze()
+        elif tensor.shape[0] == 3:
+            return tensor.permute(1, 2, 0)
 
-    tmp_image_tensor = (tmp_dataset[ind][0]).permute(1, 2, 0)
-    tmp_mask_tensor = np.squeeze((tmp_dataset[ind][1]).permute(1, 2, 0))
-    # import pdb; pdb.set_trace()
-    isOneChannel = tmp_image_tensor.shape[2] == 1
+    image, mask = PermuteDimsForPlot(image), PermuteDimsForPlot(mask)
+
     if UnNormalize:
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
-        ax[0].imshow((tmp_image_tensor * torch.tensor(std)) + torch.tensor(mean))
+        ax[0].imshow((image * torch.tensor(std)) + torch.tensor(mean))
     else:
-        # import pdb; pdb.set_trace()
-        if isOneChannel:
-            tmp_image_tensor = tmp_image_tensor.squeeze()
-            ax[0].imshow(tmp_image_tensor, cmap='gray')
-        else:
-            ax[0].imshow(tmp_image_tensor)
+        ax[0].imshow(image)
+    ax[1].imshow(mask, cmap='gray')
     ax[0].set(xticks=(), yticks=(), title='Image number ' + str(tmp_dataset.ids[ind]));
-    ax[1].imshow(tmp_mask_tensor, cmap='gray')
     ax[1].set(xticks=(), yticks=());
 
 

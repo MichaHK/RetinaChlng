@@ -3,9 +3,11 @@ from PIL import ImageOps, Image
 from torchvision import transforms
 import numpy as np
 
+
 class invert(object):
     """color invert image
     """
+
     # def __init__(self):
     def __call__(self, PIL_img):
         """
@@ -21,11 +23,14 @@ class invert(object):
     def __repr__(self):
         return self.__class__.__name__
 
+
 class threshold(object):
     """color invert image
     """
-    def __init__(self, TopThresholdValue, replaceWith = 0):
+
+    def __init__(self, TopThresholdValue, replaceWith=0):
         self.TopThresholdValue, self.replaceWith = TopThresholdValue, replaceWith
+
     def __call__(self, PIL_img):
         """
         Args:
@@ -38,9 +43,9 @@ class threshold(object):
         PIL_img = PIL_img.point(lambda x: x if x < self.TopThresholdValue else self.replaceWith)  # threshold sides
         return PIL_img
 
-
     def __repr__(self):
         return self.__class__.__name__
+
 
 class ImageNetNorm(object):
     """color invert image
@@ -61,12 +66,14 @@ class ImageNetNorm(object):
     def __repr__(self):
         return self.__class__.__name__
 
+
 class Clahe_trnsfrm(object):
     """color invert image
     """
 
-    def __init__(self, clipLimit=2.0, tileGridSize=(20,20)):
+    def __init__(self, clipLimit=2.0, tileGridSize=(20, 20)):
         self.clipLimit, self.tileGridSize = clipLimit, tileGridSize
+
     def __call__(self, PIL_img):
         """
         Args:
@@ -82,7 +89,7 @@ class Clahe_trnsfrm(object):
             img_array = np.expand_dims(img_array)
 
         for i in range(img_array.shape[2]):
-            img_array[:, :, i] = clahe.apply(img_array[:,:,i])
+            img_array[:, :, i] = clahe.apply(img_array[:, :, i])
 
         return Image.fromarray(img_array)
 
@@ -90,3 +97,30 @@ class Clahe_trnsfrm(object):
         return self.__class__.__name__
 
 
+# RandCrop_trnsfrm
+
+# For the rand crop. randomize the to and left. allow around a center.
+# maybe first crop center?
+# torchvision.transforms.functional.crop(img, top, left, height, width)
+# class RandCrop_trnsfrm(object):
+#     """color invert image
+#     """
+#
+#     def __init__(self, size, seed):
+#         self.size, self.seed = size, seed
+#
+#     def __call__(self, PIL_img):
+#         """
+#         Args:
+#             img (PIL Image): Image to be color inverted.
+#
+#         Returns:
+#             PIL Image: Cropped image.
+#         """
+#         y = np.random.randint(0, im.size[0] - CropSize)
+#         x = np.random.randint(0, im.size[1] - CropSize)
+#         PIL_img.size
+#         return PIL_img.crop()
+#
+#     def __repr__(self):
+#         return self.__class__.__name__

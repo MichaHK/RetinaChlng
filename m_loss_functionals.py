@@ -28,19 +28,20 @@ class WCE(nn.Module):
     cross entropy. Weight is in range [0,inf]. To decrease the number of false negatives, use a large weight. 
     To decrease the number flase positives, set to small. 
     """
-    def __init__(self,  eps=1e-7):
-        super(WCE, self).__init__()
-        self.eps = eps
-    def forward(self, output, target, screen = None, weight = torch.tensor(1, requires_grad=False)):
+    def __init__(self,  weight = torch.tensor(0.5, requires_grad=False)):
+        super().__init__()
+        self.weight = weight
+    def forward(self, output, target, screen = None):
         output.requires_grad_(requires_grad=True) # absolutely necessary! Not in Jupyter, but yes in here. 
         target.requires_grad_(requires_grad=False) # may be redundant
         weight = self.weight
+        assert 0 <= weight <= 1, 'weight out of range:' + str(weight)
         if isinstance(screen, torch.Tensor):
             screen.requires_grad_(requires_grad=False) # may be redundant
             return -(weight * target[screen > 0.5] * F.logsigmoid(output[screen > 0.5]) + 
                     (1-target[screen > 0.5]) * F.logsigmoid(-output[screen > 0.5])).sum()
         elif screen == None:
-            return -(weight * target * F.logsigmoid(output) + (1-target) * F.logsigmoid( - output)).sum()
+            return -(weight * target * F.logsigmoid(output) + (1- weight)*(1-target) * F.logsigmoid( - output)).sum()
         else: 
             print('screen argument type is wrong')
             return screen

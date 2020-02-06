@@ -1,9 +1,16 @@
+import platform
 import os
 import time
 from m_dataset_aux_functions import *
 from m_network_architectures import *
 import m_transforms
 import m_loss_functionals
+
+import matplotlib.pyplot as plt
+import matplotlib
+# matplotlib.use('Qt5Agg')
+# matplotlib.use('GTXAgg')
+
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
@@ -18,58 +25,11 @@ def SetWorkersBatchSize():
     print(machine_OS, 'OS. Batchsize:', batch_size, ', Num of workers:', num_workers)
     return batch_size, num_workers
 
-def getLoaclTrainDataPaths():
-    BaseFolder = Path.cwd()
-    DataFolder = BaseFolder / 'Data'
-
-    x_train_dir = DataFolder / 'training' / 'images'
-    y_train_dir = DataFolder / 'training' / '1st_manual';
-    screen_train_dir = DataFolder / 'training' / 'mask'
-    return x_train_dir, y_train_dir, screen_train_dir
-
-def displayImageAndMaskFromFolder(images_dir, y_train_dir, screen_train_dir):
-    x_images_paths = [str(image_path.absolute()) for image_path in images_dir.glob('*.tif')]
-    y_masks_paths = [str(get_mask_path(image_path, y_train_dir).absolute()) for
-                     image_path in images_dir.glob('*.tif')]
-    screen_paths = [str(get_mask_path(image_path, y_train_dir).absolute()) for
-                     image_path in images_dir.glob('*.tif')]
-    im = Image.open(x_images_paths[0])
-    im_mask = Image.open(y_masks_paths[0])
-    im_screen = Image.open(screen_paths[0])
-    fig, ax = plt.subplots(1, 3, figsize=(10, 10))
-    ax[0].imshow(im)
-    ax[1].imshow(im_mask, cmap='gray')
-    ax[2].imshow(im_screen, cmap='gray')
-    fig.show()
-
-def VisulaizePrediction(model, dataloader, ind_in_batch=0, threshold=0.5):
-    ind = ind_in_batch
-    mn = threshold
-    with torch.no_grad():
-        model.eval()
-        val_Epoch_losses = list()
-        for ii, (data, target, screen) in enumerate(dataloader):
-            break
-        data, target, screen = data.cuda(), target.cuda(), screen.cuda()
-        output = model(data)
-
-        fig, ax = plt.subplots(1, 2, figsize=(20, 10))
-        predicted = torch.sigmoid(output[ind, 0, :, :]).cpu().detach().numpy()
-        screen_numpy = screen[ind, 0, :, :].cpu().detach().numpy()
-
-        predicted[screen_numpy < 0.8] = 0
-        predicted[predicted > mn] = 1
-        predicted[predicted < mn] = 0
-        #         predicted[predicted > mn] = 1
-        t_array = target[ind, 0, :, :].cpu().detach().numpy()
-        ax[0].imshow(predicted, cmap='gray')
-        ax[1].imshow(t_array, cmap='gray')
-
 ### Loading images from directory
 if True:
     batch_size, num_workers = SetWorkersBatchSize()
     x_train_dir, y_train_dir, screen_train_dir = getLoaclTrainDataPaths()
-    # displayImageAndMaskFromFolder(x_train_dir, y_train_dir, screen_train_dir)
+    displayImageAndMaskFromFolder(x_train_dir, y_train_dir, screen_train_dir)
 
 ### setting data preprocessing and transformation
 Threshold = 240
@@ -112,8 +72,8 @@ criterion = m_loss_functionals.WCE(weight=torch.tensor(0.7000))
 metric = m_loss_functionals.DiceLoss()
 
 ###
-initial_lr = 1e-5
-num_iterations = 10
+initial_lr = 1e-3
+num_iterations = 50
 epochNumFor_lr_Decrease = 25
 # optimizer = torch.optim.SGD(model.parameters(), weight_decay=1e-4, lr = initial_lr, momentum=0.9) # works well
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4, lr = initial_lr)
@@ -155,3 +115,4 @@ if True:
 
 VisulaizePrediction(model, train_loader, ind_in_batch = 0, threshold = 0.5)
 # torch.save(model, str(BaseFolder / 'tmp.pth'))
+

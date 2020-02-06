@@ -11,6 +11,57 @@ import torchvision
 import m_transforms
 import random
 
+def getLoaclTrainDataPaths():
+    BaseFolder = Path.cwd()
+    DataFolder = BaseFolder / 'Data'
+
+    x_train_dir = DataFolder / 'training' / 'images'
+    y_train_dir = DataFolder / 'training' / '1st_manual';
+    screen_train_dir = DataFolder / 'training' / 'mask'
+    return x_train_dir, y_train_dir, screen_train_dir
+
+def displayImageAndMaskFromFolder(images_dir, y_train_dir, screen_train_dir):
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Qt5Agg')
+    x_images_paths = [str(image_path.absolute()) for image_path in images_dir.glob('*.tif')]
+    y_masks_paths = [str(get_mask_path(image_path, y_train_dir).absolute()) for
+                     image_path in images_dir.glob('*.tif')]
+    screen_paths = [str(get_mask_path(image_path, y_train_dir).absolute()) for
+                     image_path in images_dir.glob('*.tif')]
+    im = Image.open(x_images_paths[0])
+    im_mask = Image.open(y_masks_paths[0])
+    im_screen = Image.open(screen_paths[0])
+    fig, ax = plt.subplots(1, 3, figsize=(10, 10))
+    ax[0].imshow(im)
+    ax[1].imshow(im_mask, cmap='gray')
+    ax[2].imshow(im_screen, cmap='gray')
+    fig.show()
+
+def VisulaizePrediction(model, dataloader, ind_in_batch=0, threshold=0.5):
+    ind = ind_in_batch
+    mn = threshold
+    with torch.no_grad():
+        model.eval()
+        val_Epoch_losses = list()
+        for ii, (data, target, screen) in enumerate(dataloader):
+            break
+        data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+        output = model(data)
+
+        fig, ax = plt.subplots(1, 2, figsize=(20, 10))
+        predicted = torch.sigmoid(output[ind, 0, :, :]).cpu().detach().numpy()
+        screen_numpy = screen[ind, 0, :, :].cpu().detach().numpy()
+
+        predicted[screen_numpy < 0.8] = 0
+        predicted[predicted > mn] = 1
+        predicted[predicted < mn] = 0
+        #         predicted[predicted > mn] = 1
+        t_array = target[ind, 0, :, :].cpu().detach().numpy()
+        ax[0].imshow(predicted, cmap='gray')
+        ax[1].imshow(t_array, cmap='gray')
+        fig.show()
+
 def get_mask_path(x_image_path, y_train_dir):
     """Get the path of the segmented training file for the path of an original image. \n
 
@@ -91,6 +142,8 @@ class Dataset(BaseDataset):
         ImageTransforms = self.preprocessing_trnsfrms.copy()
         MaskTransforms = self.mask_trnsfrms.copy()
 
+        # This makes sure that both image and target are random cropped the same way.
+        # I should replace this to either use same random seed (import random), or use a mutable list to include the random x,y,w,h as a class variable.
         if isinstance(ImageTransforms[0], torchvision.transforms.transforms.RandomCrop):
             CropSize = ImageTransforms[0].size
             if isinstance(CropSize, int):

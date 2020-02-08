@@ -1,3 +1,6 @@
+# TODO: include a mask in the histogram equalization for the mask.
+
+
 import cv2
 from PIL import ImageOps, Image
 from torchvision import transforms
@@ -86,41 +89,59 @@ class Clahe_trnsfrm(object):
         img_array = np.array(PIL_img, dtype=np.uint8)
         hasSingleChannel = len(img_array.shape) < 3
         if hasSingleChannel:
-            img_array = np.expand_dims(img_array)
+            img_array = np.expand_dims(img_array, axis =0)
 
         for i in range(img_array.shape[2]):
             img_array[:, :, i] = clahe.apply(img_array[:, :, i])
+
+        if hasSingleChannel:
+            img_array = img_array[0,:,:]
 
         return Image.fromarray(img_array)
 
     def __repr__(self):
         return self.__class__.__name__
 
+class HistEqualize(object):
+    """color invert image
+    """
 
-# RandCrop_trnsfrm
+    # def __init__(self):
+    def __call__(self, PIL_img):
+        """
+        Args:
+            img (PIL Image): Image to be color inverted.
 
-# For the rand crop. randomize the to and left. allow around a center.
-# maybe first crop center?
-# torchvision.transforms.functional.crop(img, top, left, height, width)
-# class RandCrop_trnsfrm(object):
-#     """color invert image
-#     """
-#
-#     def __init__(self, size, seed):
-#         self.size, self.seed = size, seed
-#
-#     def __call__(self, PIL_img):
-#         """
-#         Args:
-#             img (PIL Image): Image to be color inverted.
-#
-#         Returns:
-#             PIL Image: Cropped image.
-#         """
-#         y = np.random.randint(0, im.size[0] - CropSize)
-#         x = np.random.randint(0, im.size[1] - CropSize)
-#         PIL_img.size
-#         return PIL_img.crop()
-#
-#     def __repr__(self):
-#         return self.__class__.__name__
+        Returns:
+            PIL Image: Cropped image.
+        """
+        return ImageOps.equalize(PIL_img, mask=None)
+
+    def __repr__(self):
+        return self.__class__.__name__
+
+
+class Gamma_cor(object):
+    """color invert image
+    """
+
+    def __init__(self, gamma=0.5):
+        self.gamma = gamma
+
+    def __call__(self, PIL_img):
+        """
+        Args:
+            img (PIL Image): Image to be color inverted.
+
+        Returns:
+            PIL Image: Cropped image.
+        """
+        img_array = np.array(PIL_img, dtype=np.uint8)
+        img_array = 255.0 * (img_array / 255.0)**(1 / self.gamma)
+        return Image.fromarray(np.uint8(img_array))
+
+    def __repr__(self):
+        return self.__class__.__name__
+
+
+

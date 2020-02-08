@@ -6,8 +6,8 @@ from m_network_architectures import *
 import m_transforms
 import m_loss_functionals
 
-import matplotlib.pyplot as plt
-import matplotlib
+# import matplotlib.pyplot as plt
+# import matplotlib
 # matplotlib.use('Qt5Agg')
 # matplotlib.use('GTXAgg')
 
@@ -37,7 +37,7 @@ ImageSize = (300, 300)
 interpolation = 2
 # transforms.Resize(ImageSize, interpolation), m_transforms.invert(),
 # m_transforms.threshold(240), m_transforms.Clahe_trnsfrm()
-# torchvision.transforms.RandomCrop(ImageSize)
+# torchvision.transforms.RandomCrop(ImageSize), m_transforms.HistEqualize()
 # preprocessing_trnsfrms =list([torchvision.transforms.RandomCrop(ImageSize),
 #                               m_transforms.invert(),
 #                               m_transforms.threshold(Threshold),
@@ -47,7 +47,9 @@ interpolation = 2
 preprocessing_trnsfrms =list([transforms.Resize(ImageSize, interpolation),
                               m_transforms.invert(),
                               m_transforms.threshold(Threshold),
-                              m_transforms.Clahe_trnsfrm()])
+                              m_transforms.Clahe_trnsfrm(),
+                              m_transforms.Gamma_cor(gamma=0.5)
+                              ])
 mask_trnsfrms = list([transforms.Resize(ImageSize, interpolation)])
 
 ### Setting training and validation datasets
@@ -64,12 +66,14 @@ if True:
     print('Training set size: {}, Validation set size: {}'.format(len(trainDataset), len(vldtnDataset)))
     train_loader = DataLoader(dataset = trainDataset, batch_size=batch_size, num_workers=num_workers, shuffle=True)
     vldtn_loader = DataLoader(dataset = vldtnDataset, batch_size=batch_size, num_workers=num_workers, shuffle=False)
-    # visualizeDataset(trainDataset, UnNormalize = ImageNetNorm)
+    visualizeDataset(trainDataset)
+
+visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessing_trnsfrms=preprocessing_trnsfrms, imageInd = 0, UseGreenOnly = UseGreenOnly)
 
 ### Load model and loss function
 model = UNet_V4(n_class=1, bn = True, SingleChannel=UseSingleChannel).cuda()
 criterion = m_loss_functionals.WCE(weight=torch.tensor(0.7000))
-metric = m_loss_functionals.DiceLoss()
+metric = m_loss_functionals.specificity()
 
 ###
 initial_lr = 1e-3

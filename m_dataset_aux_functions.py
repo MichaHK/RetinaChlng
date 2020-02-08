@@ -21,13 +21,10 @@ def getLoaclTrainDataPaths():
     return x_train_dir, y_train_dir, screen_train_dir
 
 def displayImageAndMaskFromFolder(images_dir, y_train_dir, screen_train_dir):
-    import matplotlib.pyplot as plt
-    import matplotlib
-    matplotlib.use('Qt5Agg')
     x_images_paths = [str(image_path.absolute()) for image_path in images_dir.glob('*.tif')]
     y_masks_paths = [str(get_mask_path(image_path, y_train_dir).absolute()) for
                      image_path in images_dir.glob('*.tif')]
-    screen_paths = [str(get_mask_path(image_path, y_train_dir).absolute()) for
+    screen_paths = [str(get_screen_path(image_path, screen_train_dir).absolute()) for
                      image_path in images_dir.glob('*.tif')]
     im = Image.open(x_images_paths[0])
     im_mask = Image.open(y_masks_paths[0])
@@ -217,13 +214,13 @@ def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
                            UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms,
                            mask_trnsfrms = mask_trnsfrms)
 
-    vldtnDataset = Dataset(x_images_paths_vldt, screen_paths_vldt, mask_paths=target_paths_train,
+    vldtnDataset = Dataset(x_images_paths_vldt, screen_paths_vldt, mask_paths=target_paths_vldt,
                            UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms,
                            mask_trnsfrms=mask_trnsfrms)
     return (trainDataset, vldtnDataset)
 
 
-def visualizeDataset(dataset, UnNormalize=True):
+def visualizeDataset(dataset):
     """PLot images in one row. Only works for one class"""
     tmp_dataset = dataset
     fig, ax, = plt.subplots(1, 2, figsize=(16, 7))
@@ -235,18 +232,17 @@ def visualizeDataset(dataset, UnNormalize=True):
         elif tensor.shape[0] == 3:
             return tensor.permute(1, 2, 0)
 
+    # if preprocessing_trnsfrms:
+    #     ImageTransformer = transforms.Compose(preprocessing_trnsfrms)
+    #     image = ImageTransformer(image)
+
     image, mask = PermuteDimsForPlot(image), PermuteDimsForPlot(mask)
 
-    if UnNormalize:
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        ax[0].imshow((image * torch.tensor(std)) + torch.tensor(mean))
-    else:
-        ax[0].imshow(image)
+    ax[0].imshow(image, cmap='gray')
     ax[1].imshow(mask, cmap='gray')
-    ax[0].set(xticks=(), yticks=(), title='Image number ' + str(tmp_dataset.ids[ind]));
-    ax[1].set(xticks=(), yticks=());
-
+    ax[0].set(xticks=(), yticks=(), title='Image number ' + str(tmp_dataset.ids[ind]))
+    ax[1].set(xticks=(), yticks=())
+    fig.show()
 
 def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
     with torch.no_grad():
@@ -257,11 +253,47 @@ def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
         for ii, (data, target, screen) in enumerate(data_loader):
             data, target, screen = data.cuda(), target.cuda(), screen.cuda()
             output = model(data)
-            #             val_loss = diceLoss(output, target)
             val_loss = loss_criterion(output, target, screen)
             metric_epoch_val = metric(output, target, screen)
-            #             val_loss = criterion(output, target, screen, alpha = torch.tensor(1.), gamma = 2.)
             val_Epoch_losses.append(val_loss.item())
             metric_epoch_vals.append(metric_epoch_val.item())
             del val_loss
     return np.mean(val_Epoch_losses), np.mean(metric_epoch_vals)
+
+def visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessing_trnsfrms=list(), imageInd = 0, UseGreenOnly = False):
+    def PermuteDimsForPlot(tensor):
+        if tensor.shape[0] == 1:
+            return tensor.squeeze()
+        elif tensor.shape[0] == 3:
+            return tensor.permute(1, 2, 0)
+    NumOfTransforms = len(preprocessing_trnsfrms)
+    if UseGreenOnly:
+        cmap = 'gray'
+    else:
+        cmap= None
+    transform_names = list()
+    fig, ax, = plt.subplots(1, NumOfTransforms + 1, figsize=(16, 7))
+    # im = Image.open(x_images_paths[0])
+    # ax[0].imshow(im)
+    assert NumOfTransforms>0
+    seed = np.random.randint(0,42)
+    for ind, trnsfrm in enumerate(preprocessing_trnsfrms):
+        transform_names.append(str(trnsfrm))
+        if ind == 0:
+            np.random.seed(seed)
+            _, CompleteDataset = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
+                                              ValidationFraction=0.5, mask_trnsfrms=list(), UseGreenOnly=UseGreenOnly,
+                                              preprocessing_trnsfrms=list([transforms.CenterCrop(564)]))
+            print(len(CompleteDataset))
+            image, _, _ = CompleteDataset[imageInd] # 1
+            image = PermuteDimsForPlot(image)
+            ax[ind].imshow(image, cmap = cmap)
+            ax[ind].set(title='Original')
+        np.random.seed(seed)
+        _, CompleteDataset = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
+                     ValidationFraction=0.5, mask_trnsfrms=list(), UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms[:ind+1])
+        image, _, _ = CompleteDataset[imageInd] # 1
+        image = PermuteDimsForPlot(image)
+        ax[ind+1].imshow(image, cmap = cmap)
+        ax[ind+1].set(title = str(trnsfrm)[:10])
+    fig.show()

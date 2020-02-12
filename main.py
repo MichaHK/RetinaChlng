@@ -14,6 +14,7 @@ import m_loss_functionals
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
+
 def SetWorkersBatchSize():
     machine_OS = platform.system()
     if machine_OS == 'Windows':
@@ -25,16 +26,18 @@ def SetWorkersBatchSize():
     print(machine_OS, 'OS. Batchsize:', batch_size, ', Num of workers:', num_workers)
     return batch_size, num_workers
 
+
 ### Loading images from directory
 if True:
     batch_size, num_workers = SetWorkersBatchSize()
     x_train_dir, y_train_dir, screen_train_dir = getLoaclTrainDataPaths()
     displayImageAndMaskFromFolder(x_train_dir, y_train_dir, screen_train_dir)
 
+mean, std = FindAvgSTD_for_images(x_train_dir, screen_train_dir)
 ### setting data preprocessing and transformation
 Threshold = 240
 ImageSize = (300, 300)
-interpolation = 2
+interpolation = 0
 # transforms.Resize(ImageSize, interpolation), m_transforms.invert(),
 # m_transforms.threshold(240), m_transforms.Clahe_trnsfrm()
 # torchvision.transforms.RandomCrop(ImageSize), m_transforms.HistEqualize()
@@ -44,13 +47,15 @@ interpolation = 2
 #                               m_transforms.Clahe_trnsfrm()
 #                              ])
 # mask_trnsfrms = list([torchvision.transforms.RandomCrop(ImageSize)])0
-preprocessing_trnsfrms =list([transforms.Resize(ImageSize, interpolation),
-                              m_transforms.invert(),
-                              m_transforms.threshold(Threshold),
-                              m_transforms.Clahe_trnsfrm(),
-                              m_transforms.Gamma_cor(gamma=0.5)
-                              ])
-mask_trnsfrms = list([transforms.Resize(ImageSize, interpolation)])
+preprocessing_trnsfrms = list([
+    m_transforms.invert(),
+    m_transforms.threshold(Threshold),
+    m_transforms.Gamma_cor(gamma=0.6),
+    m_transforms.Clahe_trnsfrm(tileGridSize=(10,10)),
+    torchvision.transforms.ToTensor(),
+    torchvision.transforms.Normalize(mean/255., std/255.),
+])
+mask_trnsfrms = list([torchvision.transforms.ToTensor()])
 
 ### Setting training and validation datasets
 MaxTrainingSetSize = 1
@@ -59,28 +64,29 @@ UseSingleChannel = False
 ImageNetNorm = False
 if True:
     (trainDataset, vldtnDataset) = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir,
-                                                MaxTrainingSetSize = MaxTrainingSetSize,
+                                                MaxTrainingSetSize=MaxTrainingSetSize,
                                                 UseGreenOnly=UseGreenOnly,
-                                               preprocessing_trnsfrms = preprocessing_trnsfrms,
-                                               mask_trnsfrms = mask_trnsfrms)
+                                                preprocessing_trnsfrms=preprocessing_trnsfrms,
+                                                mask_trnsfrms=mask_trnsfrms)
     print('Training set size: {}, Validation set size: {}'.format(len(trainDataset), len(vldtnDataset)))
-    train_loader = DataLoader(dataset = trainDataset, batch_size=batch_size, num_workers=num_workers, shuffle=True)
-    vldtn_loader = DataLoader(dataset = vldtnDataset, batch_size=batch_size, num_workers=num_workers, shuffle=False)
-    visualizeDataset(trainDataset)
+    train_loader = DataLoader(dataset=trainDataset, batch_size=batch_size, num_workers=num_workers, shuffle=True)
+    vldtn_loader = DataLoader(dataset=vldtnDataset, batch_size=batch_size, num_workers=num_workers, shuffle=False)
+    visualizeDataset(trainDataset, mean=mean, std=std)
 
-visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessing_trnsfrms=preprocessing_trnsfrms, imageInd = 0, UseGreenOnly = UseGreenOnly)
+visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessing_trnsfrms=preprocessing_trnsfrms,
+                    imageInd=0, UseGreenOnly=UseGreenOnly, mean=mean, std=std)
 
 ### Load model and loss function
-model = UNet_V4(n_class=1, bn = True, SingleChannel=UseSingleChannel).cuda()
-criterion = m_loss_functionals.WCE(weight=torch.tensor(0.7000))
-metric = m_loss_functionals.specificity()
+model = UNet_V4(n_class=1, bn=True, SingleChannel=UseSingleChannel).cuda()
+criterion = m_loss_functionals.WCE(weight=torch.tensor(0.900))
+metric = m_loss_functionals.DiceLoss()
 
 ###
-initial_lr = 1e-3
-num_iterations = 50
-epochNumFor_lr_Decrease = 25
+initial_lr = 1e-3 #  1e-2
+num_iterations = 10
+epochNumFor_lr_Decrease = 100
 # optimizer = torch.optim.SGD(model.parameters(), weight_decay=1e-4, lr = initial_lr, momentum=0.9) # works well
-optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4, lr = initial_lr)
+optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-4, lr=initial_lr)
 if True:
     losses = list()
     vldtn_losses = list()
@@ -116,7 +122,13 @@ if True:
                                                                                                            time.time() - t0))
         del metric_val
 
+VisulaizePrediction(model, train_loader, ind_in_batch=0, threshold=0.5)
 
-VisulaizePrediction(model, train_loader, ind_in_batch = 0, threshold = 0.5)
-# torch.save(model, str(BaseFolder / 'tmp.pth'))
+list_metrices = list([m_loss_functionals.specificity, m_loss_functionals.Sensitivity,
+                      m_loss_functionals.Accuracy, m_loss_functionals.DiceLoss])
+final_vldn_df = eval_final(model, vldtn_loader, list_metrices=list_metrices)
+print(final_vldn_df)
+# torch.save(model, 'WCE_singleImg_lr.pth')
+import os
 
+# os.system("sudo poweroff")

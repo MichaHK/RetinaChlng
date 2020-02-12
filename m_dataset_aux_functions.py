@@ -3,6 +3,7 @@ from torch.utils.data import Dataset as BaseDataset
 from pathlib import Path
 import numpy as np
 from PIL import Image
+import pandas as pd
 from PIL import ImageOps
 from torchvision import transforms
 import torch
@@ -10,6 +11,11 @@ import matplotlib.pyplot as plt
 import torchvision
 import m_transforms
 import random
+
+from datetime import datetime
+
+
+
 
 def getLoaclTrainDataPaths():
     BaseFolder = Path.cwd()
@@ -134,7 +140,6 @@ class Dataset(BaseDataset):
         # Flip = transforms.RandomHorizontalFlip(p=0.5)
         # CenterCrop = transforms.CenterCrop(self.size)
 
-        ToTensor = transforms.ToTensor()  # this normalizies to [0,1] range, so must appear before the ImageNet normalization
 
         ImageTransforms = self.preprocessing_trnsfrms.copy()
         MaskTransforms = self.mask_trnsfrms.copy()
@@ -154,9 +159,6 @@ class Dataset(BaseDataset):
             if not self.istest:
                 mask = mask.crop((y, x, y + CropSize[0], x + CropSize[1]))  # left, upper, right, and lower
 
-        ImageTransforms.append(ToTensor)
-        MaskTransforms.append(ToTensor)
-
         ImageTransformer = transforms.Compose(ImageTransforms)
 
         MaskTransformer = transforms.Compose(MaskTransforms)
@@ -169,6 +171,8 @@ class Dataset(BaseDataset):
         if self.istest:
             return image, screen
         return image, mask, screen
+
+
 
     def __len__(self):
         return len(self.ids)
@@ -220,7 +224,7 @@ def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
     return (trainDataset, vldtnDataset)
 
 
-def visualizeDataset(dataset):
+def visualizeDataset(dataset, mean = None, std = None):
     """PLot images in one row. Only works for one class"""
     tmp_dataset = dataset
     fig, ax, = plt.subplots(1, 2, figsize=(16, 7))
@@ -232,11 +236,16 @@ def visualizeDataset(dataset):
         elif tensor.shape[0] == 3:
             return tensor.permute(1, 2, 0)
 
-    # if preprocessing_trnsfrms:
-    #     ImageTransformer = transforms.Compose(preprocessing_trnsfrms)
-    #     image = ImageTransformer(image)
+    UnNormalize = isinstance(mean, np.ndarray)
+
+    if UnNormalize:
+        for i in range(image.shape[0]): # color index starts since this is the tensor, not PIL
+            image[i, :, :] = image[i, :, :]* std[i]/255 + mean[i]/255   # color index starts since this is the tensor, not PIL
+    else:
+        image = image
 
     image, mask = PermuteDimsForPlot(image), PermuteDimsForPlot(mask)
+    # ToPIL = torchvision.transforms.ToPILImage()
 
     ax[0].imshow(image, cmap='gray')
     ax[1].imshow(mask, cmap='gray')
@@ -260,40 +269,118 @@ def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
             del val_loss
     return np.mean(val_Epoch_losses), np.mean(metric_epoch_vals)
 
-def visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessing_trnsfrms=list(), imageInd = 0, UseGreenOnly = False):
+def eval_final(model, data_loader, list_metrices = list(), threshold = None):
+    with torch.no_grad():
+        model.eval()
+        columns = [str(metric()) for metric in list_metrices]
+        vldtn_df = pd.DataFrame(columns=columns)
+        for ii, (data, target, screen) in enumerate(data_loader):
+            data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+            output = model(data)
+            if threshold:
+                output[output<threshold] = 0
+                output[output>threshold] = 1
+            loss_items = [metric()(output, target, screen).item() for metric in list_metrices]
+            tmp_df = pd.DataFrame(data=[loss_items], columns=columns)
+            vldtn_df = vldtn_df.append(tmp_df, ignore_index=True)
+    return vldtn_df
+
+def visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessing_trnsfrms=list(), imageInd = 0,
+                        UseGreenOnly = False, mean = None, std = None):
     def PermuteDimsForPlot(tensor):
         if tensor.shape[0] == 1:
             return tensor.squeeze()
         elif tensor.shape[0] == 3:
             return tensor.permute(1, 2, 0)
+
+    SkipTransformationAfterToTensor = True
+    UnNormalize = isinstance(mean, np.ndarray)
+    assert len(preprocessing_trnsfrms) > 0
+
+    if SkipTransformationAfterToTensor:
+        indicator_of_ToTensor = [i for i, transform in enumerate(preprocessing_trnsfrms) if
+                                 isinstance(transform, torchvision.transforms.ToTensor)][0]
+        preprocessing_trnsfrms = preprocessing_trnsfrms[:indicator_of_ToTensor]
+        UnNormalize = False
     NumOfTransforms = len(preprocessing_trnsfrms)
+
     if UseGreenOnly:
         cmap = 'gray'
     else:
         cmap= None
+
     transform_names = list()
+
     fig, ax, = plt.subplots(1, NumOfTransforms + 1, figsize=(16, 7))
     # im = Image.open(x_images_paths[0])
     # ax[0].imshow(im)
-    assert NumOfTransforms>0
+
     seed = np.random.randint(0,42)
+
     for ind, trnsfrm in enumerate(preprocessing_trnsfrms):
         transform_names.append(str(trnsfrm))
         if ind == 0:
             np.random.seed(seed)
             _, CompleteDataset = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
                                               ValidationFraction=0.5, mask_trnsfrms=list(), UseGreenOnly=UseGreenOnly,
-                                              preprocessing_trnsfrms=list([transforms.CenterCrop(564)]))
-            print(len(CompleteDataset))
+                                              preprocessing_trnsfrms=list([transforms.CenterCrop(564),
+                                                                           torchvision.transforms.ToTensor()]))
             image, _, _ = CompleteDataset[imageInd] # 1
             image = PermuteDimsForPlot(image)
-            ax[ind].imshow(image, cmap = cmap)
+            min_value = image.min()
+            if min_value < 0:
+                image_tmp = (image - min_value) / (image.max() - min_value)
+            else:
+                image_tmp = image.detach().cpu()
+            ax[ind].imshow(image_tmp, cmap = cmap)
             ax[ind].set(title='Original')
         np.random.seed(seed)
         _, CompleteDataset = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
                      ValidationFraction=0.5, mask_trnsfrms=list(), UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms[:ind+1])
         image, _, _ = CompleteDataset[imageInd] # 1
+        if not isinstance(image, torch.Tensor):
+            ToTensor = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+            image = ToTensor(image)
+
+        isFinalImage = ind == NumOfTransforms-1
+        if (UnNormalize and isFinalImage):
+            for i in range(image.shape[0]):  # color index starts since this is the tensor, not PIL
+                image[i, :, :] = image[i, :, :] * std[i] / 255 + mean[i] / 255   # color index starts since this is the tensor, not PIL
+        else:
+            image = image
+
         image = PermuteDimsForPlot(image)
         ax[ind+1].imshow(image, cmap = cmap)
-        ax[ind+1].set(title = str(trnsfrm)[:10])
+        ax[ind+1].set(title = str(trnsfrm)[:])
+
+    now = datetime.now()
+    filename = now.strftime("%d-%m-%Y-%H-%M")
+
+    fig.savefig('TransformationData_'+filename+'.jpg', dpi =600)
     fig.show()
+    # savefig(fname, dpi=None, facecolor='w', edgecolor='w',
+    #         orientation='portrait', papertype=None, format=None,
+    #         transparent=False, bbox_inches=None, pad_inches=0.1,
+    #         frameon=None, metadata=None)
+
+
+def FindAvgSTD_for_images(images_dir, screen_train_dir):
+    '''
+    :param images_dir:
+    :param screen_train_dir:
+    :return:
+    '''
+    x_images_paths = [str(image_path.absolute()) for image_path in images_dir.glob('*.tif')]
+    screen_paths = [str(get_screen_path(image_path, screen_train_dir).absolute()) for
+                     image_path in images_dir.glob('*.tif')]
+    image_sum = np.array([0,0,0])
+    image_std = np.array([0,0,0])
+    ind = 0
+    for image_path, screen_path in zip(x_images_paths, screen_paths):
+        image = Image.open(image_path)
+        screen = Image.open(screen_path)
+        for i in range(3):
+            image_sum[i] += np.mean(np.array(image, dtype='uint')[:,:,i][np.array(screen) > 0.9])
+            image_std[i] += np.std(np.array(image, dtype='uint')[:,:,i][np.array(screen) > 0.9])
+        ind += 1
+    return image_sum/ind, image_std/ind

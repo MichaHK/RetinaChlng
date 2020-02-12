@@ -1,25 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData">
+  <component name="PublishConfigData" serverName="GCP_changeIP">
     <serverData>
       <paths name="GCP_changeIP">
         <serverdata>
           <mappings>
             <mapping deploy="/" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="jupyter@34.82.199.161:22">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="jupyter@34.83.11.114:22">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/jupyter/RetinaProject" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

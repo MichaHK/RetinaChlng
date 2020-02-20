@@ -26,8 +26,8 @@ class DiceLoss(nn.Module):
         
 class WCE(nn.Module):
     """My custom WEIGHTED Cross Entropy loss function. It first runs the output through a Sigmoid, then computes the
-    cross entropy. Weight is in range [0,inf]. To decrease the number of false negatives, use a large weight. 
-    To decrease the number flase positives, set to small. 
+    cross entropy. Weight is in range [0,1]. To decrease the number of false negatives, use a large weight.
+    To decrease the number false positives, set to small.
     """
     def __init__(self,  weight = torch.tensor(0.5, requires_grad=False)):
         super().__init__()
@@ -40,13 +40,14 @@ class WCE(nn.Module):
         if isinstance(screen, torch.Tensor):
             screen.requires_grad_(requires_grad=False) # may be redundant
             return -(weight * target[screen > 0.5] * F.logsigmoid(output[screen > 0.5]) + 
-                    (1-target[screen > 0.5]) * F.logsigmoid(-output[screen > 0.5])).sum()
+                    (1- weight)*(1-target[screen > 0.5]) * F.logsigmoid(-output[screen > 0.5])).sum()
         elif screen == None:
-            return -(weight * target * F.logsigmoid(output) + (1- weight)*(1-target) * F.logsigmoid( - output)).sum()
+            return -(weight * target * F.logsigmoid(output) + (1 - weight)*(1-target) * F.logsigmoid( - output)).sum()
         else: 
             print('screen argument type is wrong')
             return screen
-
+    def __repr__(self):
+        return self.__class__.__name__ + '(Weight={0})'.format(self.weight)
 
 class FocalLoss(nn.Module):
     """My custom Focal Loss function. It runs on an output that was not normalized yet using a sigmoid. 
@@ -74,6 +75,10 @@ class FocalLoss(nn.Module):
 
 class Sensitivity(nn.Module):
     """\frac{TP}{TP+FN}
+    This is the continuous version of the Sensitivity metric. Feed with non-activated last layer of classification NN.
+    For evaluation, feed with thresholded NN output, where:
+    seg_output[torch.sigmoid(seg_output) < threshold] = -1e10
+    seg_output[torch.sigmoid(seg_output) > threshold] = +1e10
     """
     def __init__(self):
         super().__init__() # maybe: super().__init__();
@@ -96,6 +101,10 @@ class Sensitivity(nn.Module):
 
 class specificity(nn.Module):
     """\frac{TN}{TN+FP}
+    This is the continuous version of the specificity metric. Feed with non-activated last layer of classification NN.
+    For evaluation, feed with thresholded NN output, where:
+    seg_output[torch.sigmoid(seg_output) < threshold] = -1e10
+    seg_output[torch.sigmoid(seg_output) > threshold] = +1e10
     """
     def __init__(self):
         super().__init__() # maybe: super().__init__();

@@ -10,6 +10,7 @@ import torch
 import matplotlib.pyplot as plt
 import torchvision
 import m_transforms
+import m_loss_functionals
 import random
 
 from datetime import datetime
@@ -40,30 +41,32 @@ def displayImageAndMaskFromFolder(images_dir, y_train_dir, screen_train_dir):
     ax[1].imshow(im_mask, cmap='gray')
     ax[2].imshow(im_screen, cmap='gray')
     fig.show()
+    # fig.savefig('ImageAndMask_.jpg', dpi = 500)
 
-def VisulaizePrediction(model, dataloader, ind_in_batch=0, threshold=0.5):
+def VisulaizePrediction(model, dataloader, ind_in_batch=0, threshold=0.5, plotAll = False):
     ind = ind_in_batch
     mn = threshold
     with torch.no_grad():
         model.eval()
-        val_Epoch_losses = list()
+
         for ii, (data, target, screen) in enumerate(dataloader):
-            break
-        data, target, screen = data.cuda(), target.cuda(), screen.cuda()
-        output = model(data)
+            data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+            output = model(data)
 
-        fig, ax = plt.subplots(1, 2, figsize=(20, 10))
-        predicted = torch.sigmoid(output[ind, 0, :, :]).cpu().detach().numpy()
-        screen_numpy = screen[ind, 0, :, :].cpu().detach().numpy()
+            fig, ax = plt.subplots(1, 2, figsize=(20, 10))
+            predicted = torch.sigmoid(output[ind, 0, :, :]).clone().cpu().detach().numpy()
+            screen_numpy = screen[ind, 0, :, :].clone().cpu().detach().numpy()
 
-        predicted[screen_numpy < 0.8] = 0
-        predicted[predicted > mn] = 1
-        predicted[predicted < mn] = 0
-        #         predicted[predicted > mn] = 1
-        t_array = target[ind, 0, :, :].cpu().detach().numpy()
-        ax[0].imshow(predicted, cmap='gray')
-        ax[1].imshow(t_array, cmap='gray')
-        fig.show()
+            predicted[screen_numpy < 0.8] = 0
+            predicted[predicted > mn] = 1
+            predicted[predicted < mn] = 0
+            #         predicted[predicted > mn] = 1
+            t_array = target[ind, 0, :, :].clone().cpu().detach().numpy()
+            ax[0].imshow(predicted, cmap='gray')
+            ax[1].imshow(t_array, cmap='gray')
+            fig.show()
+            if not plotAll:
+                break
 
 def get_mask_path(x_image_path, y_train_dir):
     """Get the path of the segmented training file for the path of an original image. \n
@@ -240,7 +243,7 @@ def visualizeDataset(dataset, mean = None, std = None):
 
     if UnNormalize:
         for i in range(image.shape[0]): # color index starts since this is the tensor, not PIL
-            image[i, :, :] = image[i, :, :]* std[i]/255 + mean[i]/255   # color index starts since this is the tensor, not PIL
+            image[i, :, :] = image[i, :, :]* std[i] + mean[i]   # color index starts since this is the tensor, not PIL
     else:
         image = image
 
@@ -253,7 +256,7 @@ def visualizeDataset(dataset, mean = None, std = None):
     ax[1].set(xticks=(), yticks=())
     fig.show()
 
-def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
+def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None, UseOneOnly = True):
     with torch.no_grad():
         model.eval()
         val_Epoch_losses = list()
@@ -267,7 +270,42 @@ def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None):
             val_Epoch_losses.append(val_loss.item())
             metric_epoch_vals.append(metric_epoch_val.item())
             del val_loss
+            if UseOneOnly:
+                break
     return np.mean(val_Epoch_losses), np.mean(metric_epoch_vals)
+
+def calculate_ROC(model, data_loader):
+    """
+    Warning: Does not work with interpolated images yet. Need to resize and run the resized back to original size here.
+
+    :param model:
+    :param data_loader:
+    :return:
+    """
+    thresholds = np.linspace(0,1, 3000)
+    with torch.no_grad():
+        model.eval()
+        TPR_func = m_loss_functionals.Sensitivity()
+        FPR_func = lambda output, target, screen=None: 1 - m_loss_functionals.specificity()(seg_output, target, screen)
+        TPR_array, FPR_array  = np.zeros((len(data_loader), len(thresholds))), np.zeros((len(data_loader), len(thresholds)))
+        for ind_image, (data, target, screen) in enumerate(data_loader):
+            data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+            output = model(data)
+            for ind_thrshld, threshold in enumerate(thresholds):
+                seg_output = output.clone().detach()
+                seg_output[torch.sigmoid(seg_output) < threshold] = -1e10
+                seg_output[torch.sigmoid(seg_output) > threshold] = +1e10
+                TPR_array[ind_image, ind_thrshld] = TPR_func(seg_output, target, screen).item()
+                FPR_array[ind_image, ind_thrshld] = FPR_func(seg_output, target, screen).item()
+    FPR_list = np.mean(FPR_array, axis = 0)
+    TPR_list = np.mean(TPR_array, axis=0)
+    fig, ax = plt.subplots(1)
+    ax.plot(FPR_list, TPR_list)
+    AUC = np.trapz(TPR_list, FPR_list)
+    ax.set(xlabel = 'FPR (1-Specificity)', ylabel = 'TPR (Sensitivity', title = 'ROC. AUC = {:.2f}'.format(AUC))
+    fig.show()
+    # print('dsfdsfs')
+    return None
 
 def eval_final(model, data_loader, list_metrices = list(), threshold = None):
     with torch.no_grad():
@@ -278,8 +316,8 @@ def eval_final(model, data_loader, list_metrices = list(), threshold = None):
             data, target, screen = data.cuda(), target.cuda(), screen.cuda()
             output = model(data)
             if threshold:
-                output[output<threshold] = 0
-                output[output>threshold] = 1
+                output[torch.sigmoid(output) < threshold] = 0
+                output[torch.sigmoid(output) > threshold] = 1
             loss_items = [metric()(output, target, screen).item() for metric in list_metrices]
             tmp_df = pd.DataFrame(data=[loss_items], columns=columns)
             vldtn_df = vldtn_df.append(tmp_df, ignore_index=True)
@@ -356,7 +394,7 @@ def visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessin
     now = datetime.now()
     filename = now.strftime("%d-%m-%Y-%H-%M")
 
-    fig.savefig('TransformationData_'+filename+'.jpg', dpi =600)
+    # fig.savefig('TransformationData_'+filename+'.jpg', dpi =600)
     fig.show()
     # savefig(fname, dpi=None, facecolor='w', edgecolor='w',
     #         orientation='portrait', papertype=None, format=None,

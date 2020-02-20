@@ -39,7 +39,7 @@ def BatchNorm2d_cond(ch_out, bn=True):
 
 
 class ResBlock(nn.Module):
-    # for different types of resnet blocks, see: https://towardsdatascience.com/residual-blocks-building-blocks-of-resnet-fd90ca15d6ec
+    # for different types of resnet blocks, see: https://towardsdatascience.com/residual-blocks-building-blocks-of-resnet-fd90ca15d6ec.
     def __init__(self, ch_in, ch_out, bn=True, expansion=False):
         super().__init__()
         self.ch_in, self.ch_out, self.expansion = ch_in, ch_out, expansion

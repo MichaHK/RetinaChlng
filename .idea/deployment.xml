@@ -7,6 +7,12 @@
           <mappings>
             <mapping deploy="/" local="$PROJECT_DIR$" web="/" />
           </mappings>
+          <excludedPaths>
+            <excludedPath path="/oldies" />
+            <excludedPath path="/.ipynb_checkpoints" />
+            <excludedPath path="/.vscode" />
+            <excludedPath path="/__pycache__" />
+          </excludedPaths>
         </serverdata>
       </paths>
     </serverData>

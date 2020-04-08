@@ -1,11 +1,88 @@
-# TODO: include a mask in the histogram equalization for the mask.
+# ======================================================================
+# pytorch transformations compatible with albumenations package
+# ======================================================================
+#
+# make sure you always work with cv2 conventions:
+# Dimensions: w x h x Channels
+# Scale and type:   [0,255] image in uint 8
+#                   [-1,1] or [0,1] image in float32
+#
+# ======================================================================
 
 
+
+
+from skimage.util import random_noise
+import random
 import cv2
-from PIL import ImageOps, Image
-from torchvision import transforms
 import numpy as np
+from albumentations.augmentations import functional as F
+from albumentations.core.transforms_interface import DualTransform, ImageOnlyTransform, NoOp, to_tuple
+from albumentations.core.utils import format_args
+import matplotlib.pyplot as plt
 
+
+def RescaleAndType(image, output_type):
+    """
+    Function rescales GRAYSCALE images to desired range and format: uint8, scaled to [0,256]; or: float scaled to [0,1]
+    For a batch, rescales every image in batch separately.
+
+    Args:
+        image: in BS x w x h x 1, or w x h x 1.
+        output_type: 'float32' or 'uint8'
+
+    Targets:
+        image, same shape. uint8, scaled to [0,256]; or: float scaled to [0,1]
+
+    """
+    assert image.ndim == 4 or image.ndim == 3, 'Dimensions are {}'.format(image.shape)
+    assert output_type in ['float32', 'uint8']
+    assert image.shape[-1] == 1, 'only grayscale'
+
+    if image.ndim == 4:
+        min_of_each_sample_in_bs = np.min(image, axis=(1, 2, 3))
+        max_of_each_sample_in_bs = np.max(image, axis=(1, 2, 3))
+        image = np.transpose(
+            (np.transpose(image) - (min_of_each_sample_in_bs)) / (max_of_each_sample_in_bs - min_of_each_sample_in_bs))
+    if image.ndim == 3:
+        image = (image - np.min(image)) / (np.max(image) - np.min(image))
+
+    if output_type == 'uint8':
+        image = (image * 255).astype('uint8')
+    elif output_type == 'float32':
+        image = image.astype('float32')
+
+    return image
+
+
+class RescaleForAug(ImageOnlyTransform):
+    """
+    Rescale to [0,255] and uint8 to be compatible with the albu / torchvision transformations
+    For a batch, rescales every image in batch separately.
+
+    Args:
+        image in BS x w x h x 1, or w x h x 1 if Ch(color) = 1.
+        output_type = 'uint8'
+
+    Targets:
+        image, same shape. uint8, scaled to [0,256]
+
+    """
+
+    def __init__(self, always_apply=True, p=1):
+        super(RescaleForAug, self).__init__(always_apply, p)
+
+    def apply(self, img, **params):
+        img = RescaleAndType(img, 'uint8')
+        return img
+
+    def __repr__(self):
+        return self.__class__.__name__+'()'
+
+    def get_transform_init_args_names(self):
+        return ()
+
+################# all the old ones used before albumentations ##############
 
 class invert(object):
     """color invert image

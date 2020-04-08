@@ -1,21 +1,30 @@
-from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as BaseDataset
 from pathlib import Path
 import numpy as np
 from PIL import Image
 import pandas as pd
-from PIL import ImageOps
 from torchvision import transforms
 import torch
 import matplotlib.pyplot as plt
 import torchvision
-import m_transforms
 import m_loss_functionals
-import random
+from albumentations.pytorch.transforms import ToTensorV2
+import albumentations
+from albumentations import (HorizontalFlip,
+                            VerticalFlip,
+                            Compose,
+                            RandomSizedCrop,
+                            OneOf,
+                            RandomRotate90,
+                            CLAHE,
+                            RandomBrightnessContrast,
+                            RandomGamma,
+                            Normalize,
+                            )
 
 from datetime import datetime
-
-
+import cv2
+from tqdm import tqdm
 
 
 def getLoaclTrainDataPaths():
@@ -27,20 +36,22 @@ def getLoaclTrainDataPaths():
     screen_train_dir = DataFolder / 'training' / 'mask'
     return x_train_dir, y_train_dir, screen_train_dir
 
-def displayImageAndMaskFromFolder(images_dir, y_train_dir, screen_train_dir):
+def displayImageAndMaskFromFolder(images_dir, y_train_dir, screen_train_dir, display = True):
     x_images_paths = [str(image_path.absolute()) for image_path in images_dir.glob('*.tif')]
     y_masks_paths = [str(get_mask_path(image_path, y_train_dir).absolute()) for
                      image_path in images_dir.glob('*.tif')]
     screen_paths = [str(get_screen_path(image_path, screen_train_dir).absolute()) for
                      image_path in images_dir.glob('*.tif')]
-    im = Image.open(x_images_paths[0])
-    im_mask = Image.open(y_masks_paths[0])
-    im_screen = Image.open(screen_paths[0])
-    fig, ax = plt.subplots(1, 3, figsize=(10, 10))
-    ax[0].imshow(im)
-    ax[1].imshow(im_mask, cmap='gray')
-    ax[2].imshow(im_screen, cmap='gray')
-    fig.show()
+    im = cv2.imread(x_images_paths[0])
+    im_mask = np.array(Image.open(y_masks_paths[0]))
+    im_screen = np.array(Image.open(screen_paths[0]))
+    if display:
+        fig, ax = plt.subplots(1, 3, figsize=(10, 10))
+        ax[0].imshow(im)
+        ax[1].imshow(im_mask, cmap='gray')
+        ax[2].imshow(im_screen, cmap='gray')
+        fig.show()
+    return im, im_mask, im_screen
     # fig.savefig('ImageAndMask_.jpg', dpi = 500)
 
 def VisulaizePrediction(model, dataloader, ind_in_batch=0, threshold=0.5, plotAll = False):
@@ -51,6 +62,7 @@ def VisulaizePrediction(model, dataloader, ind_in_batch=0, threshold=0.5, plotAl
 
         for ii, (data, target, screen) in enumerate(dataloader):
             data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+            target, screen = target[:,None,:,:], screen[:,None,:,:]
             output = model(data)
 
             fig, ax = plt.subplots(1, 2, figsize=(20, 10))
@@ -108,7 +120,6 @@ class Dataset(BaseDataset):
             mask_paths=None,
             classes=['yes'],
             preprocessing_trnsfrms=list(),
-            mask_trnsfrms=list(),
             UseGreenOnly=False,
     ):
 
@@ -126,54 +137,33 @@ class Dataset(BaseDataset):
             self.masks = [str(image_path.absolute()) for image_path in mask_paths]  # a list of paths to masks.
         self.class_values = [self.CLASSES_pool.index(cls.lower()) for cls in classes]
         self.preprocessing_trnsfrms = preprocessing_trnsfrms
-        self.mask_trnsfrms = mask_trnsfrms
         self.UseGreenOnly = UseGreenOnly
 
     def __getitem__(self, i):
         # load image, screen and mask (target). The tiff images open only with Pillow version 5.2.0
-        image = Image.open(self.images[i])
-        screen = Image.open(self.screens[i])
+        image = cv2.imread(self.images[i])
+        screen = np.array(Image.open(self.screens[i]))
 
         if not self.istest:
-            mask = Image.open(self.masks[i])
+            mask = np.array(Image.open(self.masks[i]))
 
         if self.UseGreenOnly:
             _, image, _ = image.split()
 
-        # Flip = transforms.RandomHorizontalFlip(p=0.5)
-        # CenterCrop = transforms.CenterCrop(self.size)
-
-
         ImageTransforms = self.preprocessing_trnsfrms.copy()
-        MaskTransforms = self.mask_trnsfrms.copy()
+        ImageTransforms.append(albumentations.pytorch.ToTensorV2())
+        ImageTransforms = Compose(ImageTransforms)
 
-        # This makes sure that both image and target are random cropped the same way.
-        # I should replace this to either use same random seed (import random), or use a mutable list to include the random x,y,w,h as a class variable.
-        if isinstance(ImageTransforms[0], torchvision.transforms.transforms.RandomCrop):
-            CropSize = ImageTransforms[0].size
-            if isinstance(CropSize, int):
-                CropSize = (CropSize, CropSize)
-            del ImageTransforms[0]
-            del MaskTransforms[0]
-            y = np.random.randint(0, image.size[0] - CropSize[0])
-            x = np.random.randint(0, image.size[1] - CropSize[1])
-            image = image.crop((y, x, y + CropSize[0], x + CropSize[1]))  # left, upper, right, and lower
-            screen = screen.crop((y, x, y + CropSize[0], x + CropSize[1]))  # left, upper, right, and lower
-            if not self.istest:
-                mask = mask.crop((y, x, y + CropSize[0], x + CropSize[1]))  # left, upper, right, and lower
-
-        ImageTransformer = transforms.Compose(ImageTransforms)
-
-        MaskTransformer = transforms.Compose(MaskTransforms)
-
-        image = ImageTransformer(image)
-        screen = MaskTransformer(screen)
-
-        if not self.istest:
-            mask = MaskTransformer(mask)
-        if self.istest:
+        if self.istest: # no mask, only screen
+            augmented = ImageTransforms(image=image, screen=screen)
+            image = augmented['image']/255.0
+            screen = augmented['mask']/255.0
             return image, screen
-        return image, mask, screen
+        else:
+            augmented = ImageTransforms(image=image, mask=mask, screen=screen)
+            image = augmented['image']/255.0
+            mask, screen = augmented['mask']/255.0, augmented['screen']/255.0
+            return image, mask, screen
 
 
 
@@ -182,7 +172,7 @@ class Dataset(BaseDataset):
 
 
 def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
-                 ValidationFraction=0.2, mask_trnsfrms=list(), UseGreenOnly=False, preprocessing_trnsfrms=list()):
+                 ValidationFraction=0.2, UseGreenOnly=False, preprocessing_trnsfrms=list()):
     """Take image directory and produce training and validation Dataset (2 Dataset using my custom class. ). . \n
         Uses functions "get_screen_path" and "get_mask_path" to include the correct mask (y) and screen to the sets. \n
 
@@ -219,16 +209,17 @@ def MakeDatasets(images_dir, screen_dir, target_dir, MaxTrainingSetSize=4,
 
     trainDataset = Dataset(x_images_paths_train, screen_paths_train, mask_paths=target_paths_train,
                            UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms,
-                           mask_trnsfrms = mask_trnsfrms)
+                           )
 
     vldtnDataset = Dataset(x_images_paths_vldt, screen_paths_vldt, mask_paths=target_paths_vldt,
                            UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms,
-                           mask_trnsfrms=mask_trnsfrms)
-    return (trainDataset, vldtnDataset)
+                           )
+    return (trainDataset, vldtnDataset), (x_images_paths_train, x_images_paths_vldt)
 
 
 def visualizeDataset(dataset, mean = None, std = None):
-    """PLot images in one row. Only works for one class"""
+    """PLot images in one row. Only works for one class
+    OBSOLETE"""
     tmp_dataset = dataset
     fig, ax, = plt.subplots(1, 2, figsize=(16, 7))
     ind = np.random.randint(0, len(tmp_dataset.ids))
@@ -265,6 +256,7 @@ def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None, UseOn
         for ii, (data, target, screen) in enumerate(data_loader):
             data, target, screen = data.cuda(), target.cuda(), screen.cuda()
             output = model(data)
+            target, screen = target[:,None,:,:], screen[:,None,:,:]
             val_loss = loss_criterion(output, target, screen)
             metric_epoch_val = metric(output, target, screen)
             val_Epoch_losses.append(val_loss.item())
@@ -274,7 +266,7 @@ def eval_epoch_vldtn_loss(model, data_loader, loss_criterion, metric=None, UseOn
                 break
     return np.mean(val_Epoch_losses), np.mean(metric_epoch_vals)
 
-def calculate_ROC(model, data_loader):
+def calculate_ROC(model, data_loader, serial_string=''):
     """
     Warning: Does not work with interpolated images yet. Need to resize and run the resized back to original size here.
 
@@ -288,8 +280,9 @@ def calculate_ROC(model, data_loader):
         TPR_func = m_loss_functionals.Sensitivity()
         FPR_func = lambda output, target, screen=None: 1 - m_loss_functionals.specificity()(seg_output, target, screen)
         TPR_array, FPR_array  = np.zeros((len(data_loader), len(thresholds))), np.zeros((len(data_loader), len(thresholds)))
-        for ind_image, (data, target, screen) in enumerate(data_loader):
+        for ind_image, (data, target, screen) in enumerate(tqdm(data_loader)):
             data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+            target, screen = target[:, None, :, :], screen[:, None, :, :]
             output = model(data)
             for ind_thrshld, threshold in enumerate(thresholds):
                 seg_output = output.clone().detach()
@@ -302,18 +295,21 @@ def calculate_ROC(model, data_loader):
     fig, ax = plt.subplots(1)
     ax.plot(FPR_list, TPR_list)
     AUC = np.trapz(TPR_list, FPR_list)
-    ax.set(xlabel = 'FPR (1-Specificity)', ylabel = 'TPR (Sensitivity', title = 'ROC. AUC = {:.2f}'.format(AUC))
+    title = 'ROC. AUC = {:.2f}, serial:{}'.format(AUC, serial_string)
+    ax.set(xlabel = 'FPR (1-Specificity)', ylabel = 'TPR (Sensitivity)', title = title)
     fig.show()
     # print('dsfdsfs')
-    return None
+    return thresholds, FPR_list, TPR_list
 
 def eval_final(model, data_loader, list_metrices = list(), threshold = None):
+    # so wrong. Should output with filenames.
     with torch.no_grad():
         model.eval()
         columns = [str(metric()) for metric in list_metrices]
         vldtn_df = pd.DataFrame(columns=columns)
         for ii, (data, target, screen) in enumerate(data_loader):
             data, target, screen = data.cuda(), target.cuda(), screen.cuda()
+            target, screen = target[:, None, :, :], screen[:, None, :, :]
             output = model(data)
             if threshold:
                 output[torch.sigmoid(output) < threshold] = 0
@@ -359,7 +355,7 @@ def visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessin
         transform_names.append(str(trnsfrm))
         if ind == 0:
             np.random.seed(seed)
-            _, CompleteDataset = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
+            (_, CompleteDataset), _ = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
                                               ValidationFraction=0.5, mask_trnsfrms=list(), UseGreenOnly=UseGreenOnly,
                                               preprocessing_trnsfrms=list([transforms.CenterCrop(564),
                                                                            torchvision.transforms.ToTensor()]))
@@ -373,7 +369,7 @@ def visualizeTransforms(x_train_dir, screen_train_dir, y_train_dir, preprocessin
             ax[ind].imshow(image_tmp, cmap = cmap)
             ax[ind].set(title='Original')
         np.random.seed(seed)
-        _, CompleteDataset = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
+        (_, CompleteDataset), _ = MakeDatasets(x_train_dir, screen_train_dir, y_train_dir, MaxTrainingSetSize=20,
                      ValidationFraction=0.5, mask_trnsfrms=list(), UseGreenOnly=UseGreenOnly, preprocessing_trnsfrms=preprocessing_trnsfrms[:ind+1])
         image, _, _ = CompleteDataset[imageInd] # 1
         if not isinstance(image, torch.Tensor):

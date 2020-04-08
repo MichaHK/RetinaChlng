@@ -43,7 +43,7 @@ class WCE(nn.Module):
                     (1- weight)*(1-target[screen > 0.5]) * F.logsigmoid(-output[screen > 0.5])).sum()
         elif screen == None:
             return -(weight * target * F.logsigmoid(output) + (1 - weight)*(1-target) * F.logsigmoid( - output)).sum()
-        else: 
+        else:
             print('screen argument type is wrong')
             return screen
     def __repr__(self):
@@ -52,22 +52,26 @@ class WCE(nn.Module):
 class FocalLoss(nn.Module):
     """My custom Focal Loss function. It runs on an output that was not normalized yet using a sigmoid. 
     For stability, I used the tricks on Lar's Blog: https://lars76.github.io/neural-networks/object-detection/losses-for-segmentation 
+    needs to test with Gamma and alpha that make WCE. Not sure this works.
     """
     def __init__(self, alpha=torch.tensor(0.5, requires_grad=False), gamma = 1): # maybe: __init__(self, alpha = torch.tensor(0.5, requires_grad=False), gamma = 1);
         super().__init__() # maybe: super().__init__();
+        print('needs to test with Gamma and alpha that make WCE. Not sure this works. ')
         self.alpha , self.gamma = alpha , gamma
     def forward(self, output, target, screen = None):
         output.requires_grad_(requires_grad=True) # absolutely necessary! Not in Jupyter, but yes in here. 
         target.requires_grad_(requires_grad=False) # may be redundant
         p_hat = torch.sigmoid(output)
 #         import pdb; pdb.set_trace()
-        weight_a = self.alpha * target[screen > 0.5] * (1 - p_hat)**self.gamma
-        weight_b = (1 - self.alpha) * (1 - target) * p_hat**self.gamma
-        if isinstance(screen, torch.Tensor):
-            screen.requires_grad_(requires_grad=False) # may be redundant
-            return -((weight_a*F.logsigmoid(output) + weight_b * F.logsigmoid(-output))[screen > 0.5]).sum()
-        elif screen == None:
 
+        if isinstance(screen, torch.Tensor):
+            screen.requires_grad_(requires_grad=False)  # may be redundant
+            weight_a = self.alpha * target[screen > 0.5] * (1 - p_hat[screen > 0.5]) ** self.gamma
+            weight_b = (1 - self.alpha) * (1 - target[screen > 0.5]) * p_hat[screen > 0.5] ** self.gamma
+            return -((weight_a*F.logsigmoid(output[screen > 0.5]) + weight_b * F.logsigmoid(-output[screen > 0.5]))).sum()
+        elif screen == None:
+            weight_a = self.alpha * target * (1 - p_hat) ** self.gamma
+            weight_b = (1 - self.alpha) * (1 - target) * p_hat ** self.gamma
             return -(weight_a*F.logsigmoid(output) + weight_b * F.logsigmoid(-output)).sum()
         else: 
             print('screen argument type is wrong')
